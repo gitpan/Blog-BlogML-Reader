@@ -1,0 +1,8 @@
+Changes
+Makefile.PL
+MANIFEST
+README
+t/Blog-BlogML-Reader.t
+lib/Blog/BlogML/Reader.pm
+example.xml
+META.yml                                 Module meta-data (added by MakeMaker)
