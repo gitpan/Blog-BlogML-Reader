@@ -1,200 +1,206 @@
 package Blog::BlogML::Reader;
-#$Id: Reader.pm,v 1.13 2006/06/23 23:01:44 michael Exp $
+# $Id: Reader.pm,v 1.5 2006/08/05 22:20:29 michael Exp $
 
-use 5.008004;
+our $VERSION = 1.0;
+
+use 5.008006;
 use strict;
 use warnings;
-our $VERSION = 0.01;
 
-our @ISA			= qw(Exporter);
-our @EXPORT_OK		= qw(parse_blog find_latest find_by_cat meta cat post);
-our %EXPORT_TAGS	= ('all' => \@EXPORT_OK);
-
-use XML::Parser::Expat;
+use base 'XML::Parser::Expat';
 use HTTP::Date;
 use Carp;
 
-# define paths to things we are interested in keeping
-my $blog_root		= '/blog';
-my $blog_title		= "$blog_root/title";
-my $blog_subtitle	= "$blog_root/sub-title";
-my $blog_author		= "$blog_root/author";
-
-my $cat				= "$blog_root/categories/category";
-my $cat_title		= "$cat/title";
-
-my $post			= "$blog_root/posts/post";
-my $post_title		= "$post/title";
-my $content			= "$post/content";
-my $post_cat		= "$post/categories/category";
-
-my %blog = ();
-my $path = '/';
-my $incat;
-my $inpost;
-my $this_post;
-my $this_cat;
-    
-my $parser = new XML::Parser::Expat(
-	Namespaces		=> 1,
-	NoExpand		=> 1,
-	ParseParamEnt	=> 0,
-	ErrorContext	=> 2
-);
-$parser->setHandlers(
-	'Start'	=> \&_on_start,
-	'Char'	=> \&_on_char,
-	'End'	=> \&_on_end,
-);
-
-my $now = time; # future posts are ignored
-
-
-sub parse_blog {
-	my ($blogml_pathname) = @_;
-	$blogml_pathname or die 'Missing required argument: blogml_pathname.'; 
+sub new {
+	my $class = shift;
 	
-	if (%blog and ($blog{source} eq $blogml_pathname)) {
-		return %blog;
-	}
-	else {
-		%blog = (
-			source	=> $blogml_pathname,
-			meta	=> {},
-			cats	=> {},
-			posts	=> {},
-		);
-		eval{ $parser->parsefile($blogml_pathname) };
-		(carp $@ and return 0) if $@;
-	}
-	return 1;
+	my $source = shift or carp q(new(): Missing required argument: $source.);
+	
+	my %filter = @_;
+	$filter{after}  &&= ($filter{after} =~ /\D/)?  str2time($filter{after}):$filter{after};
+	$filter{before} &&= ($filter{before} =~ /\D/)? str2time($filter{before}):$filter{before};
+	
+	my $self = new XML::Parser::Expat(
+		Namespaces		=> 1,
+		NoExpand		=> 1,
+		ParseParamEnt	=> 0,
+		ErrorContext	=> 2,
+	);
+	$self->setHandlers(
+		Start	=> \&_on_start,
+		Char	=> \&_on_char,
+		End		=> \&_on_end,
+	);
+	
+	$self->{blog} = {
+		source	=> $source,
+		meta	=> {},
+		cats	=> {},
+		posts	=> [],
+		filter => \%filter,
+	};
+	$self->{current_context} = undef;
+	$self->{this_post} = undef;
+	$self->{this_cat} = undef;
+	
+	$self->{count}	= 0;
+	$self->{from}	= (defined $filter{from})? $filter{from}:0;
+	$self->{to}		= (defined $filter{to})? $filter{to}:undef;
+	
+	eval{ $self->parsefile($self->{blog}{source}) };
+	carp $@ if $@;
+	
+	bless $self, $class;
 }
 
-sub _on_start { # grab attributes of the tag here
-	my ($p, $element, %att) = @_;
-	$path = '/'.join('/', &XML::Parser::Expat::context, $element);
+my %context = (
+	blog_root		=> '/blog',
+	blog_title		=> '/blog/title',
+	blog_subtitle	=> '/blog/sub-title',
+	blog_author		=> '/blog/author',
+
+	cat				=> '/blog/categories/category',
+	cat_title		=> '/blog/categories/category/title',
+
+	post			=> '/blog/posts/post',
+	post_title		=> '/blog/posts/post/title',
+	post_content	=> '/blog/posts/post/content',
+	post_cat		=> '/blog/posts/post/categories/category',
+);
+
+sub _on_start {
+	my ($self, $element, %att) = @_;
+	$self->{current_context} = '/'.join('/', $self->context, $element);
 	
-	if ($path eq $blog_author) {
-		$blog{meta}{author_name} = $att{'name'};
-		$blog{meta}{author_email} = $att{'email'};
-	}
-	elsif ($path eq $post) {
-		unless (defined $att{'approved'} and $att{'approved'} eq 'false') {
-			my $id = $att{'id'};
-			my $url = $att{'post-url'};
-			my $time = str2time($att{'date-created'});
-			if ($time <= $now) {
-				$this_post = {id=>$id, time=>$time, url=>$url, catrefs=>[]};
-			}
+	if ($self->{current_context} eq $context{post}
+		and $att{approved} eq 'true') {
+			
+		$self->{count}++;
+		if ($self->{count} < $self->{from}) {
+			return;
 		}
-	}
-	elsif ($path eq $cat) {
-		unless (defined $att{'approved'} and $att{'approved'} eq 'false') {
-			my $id = $att{'id'};
-			my $time = str2time($att{'date-created'});
-			my $parentref = $att{'parentref'};
-			$this_cat = {id=>$id, time=>$time, parentref=>$parentref};
+		
+		if (defined $self->{to} and $self->{count} > $self->{to}) {
+			$self->finish();
+			return;
 		}
-	}
-	elsif ($path eq $post_cat) {
-		if ($this_post) {
-			my $ref = $att{'ref'};
-			push @{$this_post->{catrefs}}, $blog{meta}{cats}{$ref};
+		
+		if ($self->{blog}{filter}{post}
+			and $att{id} ne $self->{blog}{filter}{post}) {
+			return;
 		}
+		$att{'date-created'} = str2time($att{'date-created'});
+		if ($self->{blog}{filter}{before}
+			and $att{'date-created'} > $self->{blog}{filter}{before}) {
+			return;
+		}
+		if ($self->{blog}{filter}{after}
+			and $att{'date-created'} < $self->{blog}{filter}{after}) {
+			$self->finish();
+			return;
+		}
+		
+		$self->{this_post} = {
+			id		=> $att{id},
+			url		=> $att{'post-url'},
+			time	=> $att{'date-created'},
+			title	=> '',
+			content	=> '',
+			cats	=> [],
+		};
 	}
-	elsif ($path eq $blog_root) {
-		my $root_url = $att{'root-url'};
-		$blog{meta}{root_url} .= $root_url;;
+	elsif ($self->{current_context} eq $context{cat}
+		   and $att{approved} eq 'true') {
+		
+		$self->{this_cat} = {
+			id		=> $att{id},
+			parent	=> $att{parentref},
+			title	=> '',
+		};
+	}
+	elsif ($self->{current_context} eq $context{blog_author}) {
+		$self->{blog}{meta}{author} = $att{name};
+		$self->{blog}{meta}{email} = $att{email};
+	}
+	elsif ($self->{current_context} eq $context{blog_root}) {
+		$self->{blog}{meta}{url} = $att{'root-url'};
+		$self->{blog}{meta}{time} = str2time($att{'date-created'});
+	}
+	elsif ($self->{current_context} eq $context{post_cat}
+		and $self->{this_post}) {
+		push @{$self->{this_post}{cats}}, $att{ref};
 	}
 }
 
-sub _on_char { # grab character data here
-	my ($p, $char) = @_;
-
-	return unless ($char =~ /\S/);
+sub _on_char {
+	my ($self, $char) = @_;
 	
-	if ($this_post) {
-		($path eq $post_title) and $this_post->{title} .= $char;
-		($path eq $content) and $this_post->{content} .= "$char\n";
+	_trim($char);
+	
+	if ($self->{current_context} eq $context{post_title}
+		and $self->{this_post}) {
+		$self->{this_post}{title} .= (($self->{this_post}{title} and $char)? ' ':'').$char;
 	}
-	elsif ($this_cat) {
-		($path eq $cat_title) and $this_cat->{title} .= $char;
+	elsif ($self->{current_context} eq $context{post_content}
+		   and $self->{this_post}) {
+		$self->{this_post}{content} .= (($self->{this_post}{content} and $char)? "\n":'').$char;
 	}
-	elsif ($path eq $blog_title) {
-		$blog{meta}{title} .= $char;
+	elsif ($self->{current_context} eq $context{cat_title}
+		   and $self->{this_cat}) {
+		$self->{this_cat}{title} .= (($self->{this_cat}{title} and $char)? ' ':'').$char;
 	}
-	elsif ($path eq $blog_subtitle) {
-		$blog{meta}{subtitle} .= $char;
+	elsif ($self->{current_context} eq $context{blog_title}) {
+		$self->{blog}{meta}{title} .= (($self->{blog}{meta}{title} and $char)? ' ':'').$char;
+	}
+	elsif ($self->{current_context} eq $context{blog_subtitle}) {
+		$self->{blog}{meta}{subtitle} .= (($self->{blog}{meta}{subtitle} and $char)? ' ':'').$char;
 	}
 }
 
 sub _on_end {
-	my ($p, $element) = @_;
+	my ($self, $element) = @_;
+	$self->{current_context} = '/'.join('/', $self->context, $element);
 	
-	$path = '/'.join('/', &XML::Parser::Expat::context, $element);
-
-	if ($path eq $post and $this_post) {
-		my $id = $this_post->{id};
-		$blog{posts}{$id} = $this_post;
-		undef $this_post;
-	}
-	elsif ($path eq $cat and $this_cat) {
-		my $id = $this_cat->{id};
-		$blog{meta}{cats}{$id} = $this_cat;
-		undef $this_cat;
-	}
-}
-
-sub find_latest {
-	my ($limit) = @_;
-	
-	my @latest = sort {$b->{time} <=> $a->{time}} values %{$blog{posts}};	
-
-	return ($limit and ($limit <= $#latest))? [@latest[0..$limit-1]] : \@latest;
-}
-
-sub find_by_cat {
-	my ($cat_id) = @_;
-	
-	my @found = ();
-	my @posts = @{find_latest()};
-	
-	POST: foreach my $post (@posts) {
-		foreach my $catref (@{$post->{catrefs}}) {
-			if ($cat_id == $catref->{id}) {
-				push(@found, $post);
-				next POST;
-			}
+	if ($self->{current_context} eq $context{post}
+		and $self->{this_post}) {
+		if (defined $self->{blog}{filter}{cat}
+			and !grep /$self->{blog}{filter}{cat}/, @{$self->{this_post}{cats}}) {
+			return;
 		}
+		push @{$self->{blog}{posts}}, $self->{this_post};
+		
+		undef $self->{this_post};
 	}
-	return \@found;
+	elsif ($self->{current_context} eq $context{cat}
+		   and $self->{this_cat}) {
+		$self->{blog}{cats}{$self->{this_cat}->{id}} = $self->{this_cat};
+		
+		undef $self->{this_cat};
+	}
+}
+
+sub posts {
+	my ($self) = @_;
+	return $self->{blog}{posts};
+}
+
+sub cats {
+	my ($self) = @_;
+	return $self->{blog}{cats};
 }
 
 sub meta {
-	my ($meta_key) = @_;
-	
-	if (defined $meta_key and $meta_key ne '') {
-		return $blog{meta}{$meta_key};
-	}
-	else {
-		return $blog{meta};
-	}
+	my ($self) = @_;
+	return $self->{blog}{meta};
 }
 
-sub post {
-	my ($post_id) = @_;
-	
-	if (defined $post_id and $post_id ne '') {
-		return $blog{posts}{$post_id};
-	}
-	else {
-		return $blog{posts};
-	}
+sub _trim {
+	$_[0] =~ s/(^\s+|\s+$)//g;
 }
 
 1;
 
-__END__
+=pod
 
 =head1 NAME
 
@@ -202,21 +208,12 @@ Blog::BlogML::Reader - Read data from a BlogML formatted XML document.
 
 =head1 SYNOPSIS
 
-	use Blog::BlogML::Reader;
-	Blog::BlogML::Reader::parse_blog("this_blog.xml");
-	
-	# OR
-	
-	use Blog::BlogML::Reader qw(:all);
-	parse_blog("that_blog.xml");
-	my $posts = find_latest(10);
-	
-=head1 DESCRIPTION
+  use Blog::BlogML::Reader;
+  
+  my $reader = new Blog::BlogML::Reader('some/file/blogml.xml');
+  my @posts = @{$reader->{blog}{posts};
 
-BlogML is a standard for XML to define and store an entire blog. This module 
-allows you to easily read most data in a given BlogML file.
-
-=head2 DEPENDENCIES
+=head1 DEPENDENCIES
 
 =over 
 
@@ -226,89 +223,92 @@ This module uses C<XML::Parser::Expat> to parse the XML in the BlogML source fil
 
 =item * HTTP::Date
 
-This module uses C<HTTP::Date> to transform date strings into sortable timestamps. Neccessary when, for example, sorting blog posts and retrieving the most recent.
+This module uses C<HTTP::Date> to transform date strings into sortable timestamps. Necessary when, for example, sorting blog posts and retrieving the most recent.
 
 =back
 
-=head2 EXPORT
+=head1 EXPORT
 
-None by default.
+None.
 
 =head1 INTERFACE
 
-Any or all of the following subroutines can be imported into the using script's namespace (or you may use the full package name to access them if you prefer). Specifying ":all" on the use line will include all of them into your script's namespace. Note that, for efficiency reasons, this module does not use an object-oriented interface, so the items listed below are not methods of any instance, just simple subroutines.
+=head2 filters
+
+When creating a new reader, the default bahaviour is to parse and load the entire BlogML structure into memory. This can be inefficient if, for example, you have ten-thousand posts and only want the first one. For this reason it is possible (and recommended) that you give the parser some limits before letting it go. This is done by adding filters to the constructor.
 
 =over 3
 
-=item * parse_blog("/path/to/blog.xml");
+=item * to=>I<n>
 
-Call this first. This will build a data structure in memory, which can then be more conveniently accessed through the remaining subroutines. Calling this more than once is useless as the XML file will only be parsed once. The single argument is required, and must specify the filepath to a readable XML file that complies with the BlogML format.
+Limits the parser to only the first I<n> post in the BlogML file.
 
-=item * meta($meta_key);
+  $reader = new Blog::BlogML::Reader('blogml.xml', to=>3);
 
-If your BlogML document includes information about the blog it can be accessed via the hashref returned by this subroutine. If you only want a specific field you can specify it as an optional argument.
+=item * from=>I<n>
 
-	my $meta = meta();
-	print $meta->{title};
-	print $meta->{subtitle};
-	print $meta->{author_name};
-	print $meta->{author_email};
-	print $meta->{root_url};
-	print $meta->{cats}{personal}{parent-ref};
-	
-	# OR
-	
-	my $title = meta('title');
-	my $cats = meta('cats');
-	print $cats->{news}{date-created};
-	
+The parser will only start at the I<n>th item in the BlogML file. Note that this can optionally be used with C<to> in order to limit the parser to a range of posts.
 
-=item * find_latest($limit);
+  $reader = new Blog::BlogML::Reader('blogml.xml', from=>11, to=>20);
 
-This returns an array reference of posts from the blog, sorted most recent first. You may optionally pass along a limit (integer) to specify the maximum number of posts you want.
+=item * before=>I<date>
 
-	my $latest_posts = find_latest(10);
-	foreach my $post (@$latest_posts) {
-		print $post->{title};
-	}
+Limits the parser to posts with a creation-date before I<date>.
 
-=item * find_by_cat($cat_id);
+  $reader = new Blog::BlogML::Reader('blogml.xml', before=>"2006-05-01T00:00:00");
 
-Given a required category ID, this will return an array reference to every post that is associated with that category.
+=item * after=>I<date>
 
-	my $reviews = find_by_cat('review');
-	foreach my $post (@$reviews) {
-		print $post->{title};
-	}
-	
-=item * post($post_id);
+Limits the parser to posts with a creation-date after I<date>. Can optionally be used with C<before> to limit the parser to a range of dates.
 
-If you already know the ID of the post you want, use this subroutine, which returns a hash reference to only that post;
+  $reader = new Blog::BlogML::Reader('blogml.xml', after=>"2006-08-01T00:00:00");
 
-	my $post = post(309);
-	print $post->{title}, $post->{content};
+=item * id=>I<n>
+
+If you know the specific post you want, why parse the entire file? 
+
+  $reader = new Blog::BlogML::Reader('blogml.xml', id=>123);
+
+=item * cat=>I<n>
+
+Limits the parser to only the posts that belong to the category with the given id.
+
+  $reader = new Blog::BlogML::Reader('blogml.xml', cat=>'news');
 
 =back
 
-=head1 EXAMPLE
-	
-	use Blog::BlogML::Reader qw(:all);
-	use Date::Format;
-	parse_blog("/blogs/my_blog.xml");
-	
-	# get the latest posts
-	my $posts = find_latest(12);
-	
-	foreach my $post (@$posts) {
-		print "<h1>", $post->{title}, "</h1>";
-		# You can use Date::Format to make a nicely formatted date string
-		print "posted on: ", time2str("%o of %B %Y", $post->{time}), "<br>";
-		print "<div>", $post->{content}, "</div>";
-		
-		# the categories associated with this post
-		my $cat_listing = join(", ",  map{$_->{title}} @{$post->{catrefs}});
-		$cat_listing and print "Filed under: $cat_listing";
-	}
+=head2 methods
+
+=over 3
+
+=item * meta()
+
+Returns a hash ref of information about the blog.
+
+  my $meta = $reader->meta();
+  print $meta->{title};
+  print $meta->{author}, $meta->{email};
+
+=item * posts()
+
+Returns an array ref of blog posts.
+
+  my $posts = $reader->posts();
+  print $posts->[0]{title};
+  
+  foreach my $post (@$posts) {
+    print $post->{title};
+    print $post->{content};
+  }
+
+=item * cats()
+
+Returns a hash ref of blog categories, with the keys bsing the category id.
+
+  my $cats = $reader->cats();
+  print $cats->{'news'}{title};
+
+=back
 
 =head1 SEE ALSO
 
@@ -322,8 +322,8 @@ Michael Mathews, E<lt>mmathews@cpan.orgE<gt>
 
 Copyright (C) 2006 by Michael Mathews
 
-This library is free software; you can redistribute it and/or modify
-it under the same terms as Perl itself, either Perl version 5.8.6 or,
-at your option, any later version of Perl 5 you may have available.
+This library is free software; you can redistribute it and/or modify it under the same terms as Perl itself, either Perl version 5.8.6 or, at your option, any later version of Perl 5 you may have available.
 
 =cut
+
+__END__

@@ -1,8 +1,16 @@
 Blog-BlogML-Reader version 0.01
 ===============================
 
-BlogML is a standard for XML to define and store an entire blog. This module 
-allows you to easily read most data in a given BlogML file.
+The README is used to introduce the module and provide instructions on
+how to install the module, any machine dependencies it may have (for
+example C compilers and installed libraries) and any other information
+that should be provided before the module is installed.
+
+A README file is required for CPAN modules since CPAN extracts the
+README file from a module distribution so that people browsing the
+archive can use it get an idea of the modules uses. It is usually a
+good idea to provide version information here so that people can
+decide whether fixes for the module are worth downloading.
 
 INSTALLATION
 
@@ -15,18 +23,13 @@ To install this module type the following:
 
 DEPENDENCIES
 
-XML::Parser::Expat
-This module uses XML::Parser::Expat to parse the XML in the BlogML source file.
-I chose an expat based parser primarily for its speed. Check the docs for 
-XML::Parser::Expat for further dependencies.
+This module requires these other modules and libraries:
 
-HTTP::Date
-This module uses HTTP::Date to transform date strings into sortable timestamps.
-Neccessary when, for example, sorting blog posts and retrieving the most
-recent.
-
+  blah blah blah
 
 COPYRIGHT AND LICENCE
+
+Put the correct copyright and licence information here.
 
 Copyright (C) 2006 by Michael Mathews
 
