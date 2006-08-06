@@ -2,7 +2,7 @@
 use strict;
 use warnings;
 
-use Test::More tests => 7;
+use Test::More tests => 6;
 use blib;
 use Blog::BlogML::Reader;
 
@@ -15,4 +15,3 @@ like($meta->{subtitle}, qr'The wild side of the news.', q(Found expected subtitl
 is($meta->{author}, 'Tex McNabbit', q(Found expected author.));
 is($meta->{email}, 'tex@wcs.org', q(Found expected email.));
 is($meta->{url}, 'http://blog.wcs.org/', q(Found expected url.));
-is($meta->{time}, '1134000988', q(Found expected url.));
