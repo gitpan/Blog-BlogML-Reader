@@ -1,7 +1,7 @@
 package Blog::BlogML::Reader;
 # $Id: Reader.pm,v 1.5 2006/08/05 22:20:29 michael Exp $
 
-our $VERSION = 1.0;
+our $VERSION = 1.01;
 
 use 5.008006;
 use strict;
