@@ -15,3 +15,4 @@ like($meta->{subtitle}, qr'The wild side of the news.', q(Found expected subtitl
 is($meta->{author}, 'Tex McNabbit', q(Found expected author.));
 is($meta->{email}, 'tex@wcs.org', q(Found expected email.));
 is($meta->{url}, 'http://blog.wcs.org/', q(Found expected url.));
+

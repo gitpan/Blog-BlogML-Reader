@@ -1,7 +1,7 @@
 package Blog::BlogML::Reader;
-# $Id: Reader.pm,v 1.5 2006/08/05 22:20:29 michael Exp $
+# $Id: Reader.pm,v 1.6 2006/08/07 21:43:07 michael Exp $
 
-our $VERSION = 1.02;
+our $VERSION = 1.03;
 
 use 5.008006;
 use strict;
@@ -95,7 +95,7 @@ sub _on_start {
 			return;
 		}
 		if ($self->{blog}{filter}{after}
-			and $att{'date-created'} < $self->{blog}{filter}{after}) {
+			and $att{'date-created'} <= $self->{blog}{filter}{after}) {
 			$self->finish();
 			return;
 		}
@@ -204,14 +204,14 @@ sub _trim {
 
 =head1 NAME
 
-Blog::BlogML::Reader - Read data from a BlogML formatted XML document.
+Blog::BlogML::Reader - read data from a BlogML formatted document
 
 =head1 SYNOPSIS
 
   use Blog::BlogML::Reader;
   
   my $reader = new Blog::BlogML::Reader('some/file/blogml.xml');
-  my @posts = @{$reader->{blog}{posts};
+  my @posts = @{$reader->posts()};
 
 =head1 DEPENDENCIES
 
@@ -219,11 +219,11 @@ Blog::BlogML::Reader - Read data from a BlogML formatted XML document.
 
 =item * XML::Parser::Expat
 
-This module uses C<XML::Parser::Expat> to parse the XML in the BlogML source file. I chose an expat based parser primarily for its speed. Check the docs for XML::Parser::Expat for further dependencies.
+This module uses C<XML::Parser::Expat> to parse the XML in the BlogML source file.
 
 =item * HTTP::Date
 
-This module uses C<HTTP::Date> to transform date strings into sortable timestamps. Necessary when, for example, sorting blog posts and retrieving the most recent.
+This module uses C<HTTP::Date> to transform date strings into sortable timestamps.
 
 =back
 
@@ -235,37 +235,37 @@ None.
 
 =head2 filters
 
-When creating a new reader, the default bahaviour is to parse and load the entire BlogML structure into memory. This can be inefficient if, for example, you have ten-thousand posts and only want the first one. For this reason it is possible (and recommended) that you give the parser some limits before letting it go. This is done by adding filters to the constructor.
+When creating a new reader, the default bahaviour is to parse and return every post in the entire BlogML file. This can be inefficient if, for example, you have ten-thousand posts and only want the first one. For this reason it is recommended that you give the parser some limits. This is done by adding "filters" to the constructor call. Note that once a reader is constructed it's filters cannot be modified; you must create a new reader if you wish to apply new filters.
 
 =over 3
 
-=item * to=>I<n>
+=item * to=>I<count>
 
-Limits the parser to only the first I<n> post in the BlogML file.
+Limits the parser to only the first I<count> posts (starting from the top of the file and working down) in the BlogML file; that is the parser stops working after I<count> posts. Note that the count does not apply to posts that have an "approved" attribute of false: unapproved posts are always invisible to the parser.
 
   $reader = new Blog::BlogML::Reader('blogml.xml', to=>3);
 
-=item * from=>I<n>
+=item * from=>I<count>
 
-The parser will only start at the I<n>th item in the BlogML file. Note that this can optionally be used with C<to> in order to limit the parser to a range of posts.
+The parser will only start working at the I<count> item in the BlogML file. Note that this can optionally be used in conjunction with the C<to> filter to limit the parser to a range of posts.
 
   $reader = new Blog::BlogML::Reader('blogml.xml', from=>11, to=>20);
 
 =item * before=>I<date>
 
-Limits the parser to posts with a creation-date before I<date>.
+Limits the parser to posts with a creation-date before (older than) the given I<date>. The date format can either be a string that complies with the HTTP date protocol or a number representing the Unix time.
 
   $reader = new Blog::BlogML::Reader('blogml.xml', before=>"2006-05-01T00:00:00");
 
 =item * after=>I<date>
 
-Limits the parser to posts with a creation-date after I<date>. Can optionally be used with C<before> to limit the parser to a range of dates.
+Limits the parser to posts with a creation-date on or after (younger than) the given I<date>. Can optionally be used in conjunction with the C<before> filter to limit the parser to a range of dates. The date format can either be a string that complies with the HTTP date protocol or a number representing the Unix time.
 
-  $reader = new Blog::BlogML::Reader('blogml.xml', after=>"2006-08-01T00:00:00");
+  $reader = new Blog::BlogML::Reader('blogml.xml', after=>1154979460);
 
 =item * id=>I<n>
 
-If you know the specific post you want, why parse the entire file? 
+If you know the exact post you want, why force the parser to work on the entire file?
 
   $reader = new Blog::BlogML::Reader('blogml.xml', id=>123);
 
@@ -273,7 +273,7 @@ If you know the specific post you want, why parse the entire file?
 
 Limits the parser to only the posts that belong to the category with the given id.
 
-  $reader = new Blog::BlogML::Reader('blogml.xml', cat=>'news');
+  $reader = new Blog::BlogML::Reader('blogml.xml', cat=>'123');
 
 =back
 
@@ -283,7 +283,7 @@ Limits the parser to only the posts that belong to the category with the given i
 
 =item * meta()
 
-Returns a hash ref of information about the blog.
+Returns a HASHREF of meta information about the blog.
 
   my $meta = $reader->meta();
   print $meta->{title};
@@ -291,28 +291,55 @@ Returns a hash ref of information about the blog.
 
 =item * posts()
 
-Returns an array ref of blog posts.
+Returns an ARRAYREF of blog posts (in the same order as they are in the file). The number of posts returned will be limited by any filters applied when the reader was constructed.
 
   my $posts = $reader->posts();
   print $posts->[0]{title};
-  
-  foreach my $post (@$posts) {
-    print $post->{title};
-    print $post->{content};
-  }
 
 =item * cats()
 
-Returns a hash ref of blog categories, with the keys bsing the category id.
+Returns a HASHREF of blog categories (keys are the category id).
 
   my $cats = $reader->cats();
-  print $cats->{'news'}{title};
+  print $cats->{'123'}{title};
 
 =back
 
+=head1 EXAMPLE
+
+	use Blog::BlogML::Reader;
+	use Date::Format;
+
+	# parse all posts in the month of April
+	my $reader = new Blog::BlogML::Reader('t/example.xml',
+	  after  => "2006-04-01T00:00:00",
+	  before => "2006-05-01T00:00:00",
+	);
+
+	my $posts = $reader->posts();
+	my $meta  = $reader->meta();
+	my $cats  = $reader->cats();
+
+	print "<h1>", $meta->{title}, "</h1>";
+	print $meta->{author};
+
+	foreach my $post (@$posts) {
+	  print "<h2>", $post->{title}, "</h2>";
+
+	  # post dates are returned in Unix time, so format as desired
+	  print "posted:", time2str("%o of %B %Y", $post->{time});
+
+	  print " categories:",
+	  join(", ",  map{$cats->{$_}{title}} @{$post->{cats}});
+
+	  print " link:", $post->{url};
+
+	  print $post->{content}, "<hr />";
+	}
+
 =head1 SEE ALSO
 
-The website L<http://BlogML.com> has the latest documentation on the BlogML standard. Note that the reference document "example.xml" included with this module illustrates the expected format.
+The website L<http://BlogML.com> has the latest documentation on the BlogML standard. Note that the reference document "t/example.xml" included with this distribution illustrates the expected format of BlogML documents used by this module.
 
 =head1 AUTHOR
 

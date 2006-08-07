@@ -15,4 +15,5 @@ t/10trim.t
 t/example.xml
 lib/Blog/BlogML/Reader.pm
 t/example.xml
+example.pl
 META.yml                                 Module meta-data (added by MakeMaker)

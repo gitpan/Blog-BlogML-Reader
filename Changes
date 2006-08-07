@@ -8,3 +8,7 @@ Revision history for Perl extension Blog::BlogML::Reader.
 	- rewritten to use an OO interface
 	- added filters to the constructor to limit what is parsed into memory
 
+1.03 Mon Aug 7 22:45:00 2006
+	- improvements to the documentation
+	- added a working example script
+
